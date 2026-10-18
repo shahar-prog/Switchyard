@@ -32,6 +32,7 @@ const PALETTE = [
 const C = {
   grass: '#7db457', grassDark: '#6aa246', grassLight: '#93c76a',
   ballast: '#bcae92', tie: '#6e4b2f', rail: '#4f565f', railHi: '#dfe3e8',
+  slowBallast: '#d9b768', slowTie: '#f2c12e', signPost: '#3a3f47', sign: '#ffd23f', turtle: '#2f7a3a',
   leaf: '#3f8139', leafDark: '#2d6a2c', trunk: '#6b4a2f', rock: '#a3a6a0',
   ok: '#2bb24c', bad: '#e0392f',
 };
@@ -40,6 +41,8 @@ const TRAIN_OFFSETS = [0.27, 0.86, 1.42]; // engine centre, car 1, car 2 (cells 
 const TRAIN_LEN = 1.72;
 const MIN_LEAD = 4;    // track cells between the tunnel and the first switch
 const KEY_SPEEDS = { f: 3, ' ': 3, d: 2 }; // hold-to-speed-up keys
+const SPAWN_SPACING = 1.25; // stretches the time between departures on every level
+const LEAD_SLOW = 0.55; // speed factor from the tunnel up to the first switch
 
 // ---------- saved progress ----------
 const STORE_KEY = 'switchyard.v1';
@@ -58,9 +61,13 @@ function persist() {
 // ---------- level progression ----------
 function levelConfig(level) {
   const houses = Math.min(PALETTE.length, 2 + Math.ceil(level / 2));
-  const speed = Math.min(2.7, 1.15 + level * 0.07);          // cells per second
+  // Speed and frequency ramp up through the early levels, then flatten out
+  // so the late levels get harder mostly through extra stations.
+  const early = Math.min(level, 8), late = Math.max(0, level - 8);
+  const speed = Math.min(2.1, 1.15 + early * 0.07 + late * 0.025); // cells per second
   const trains = Math.min(30, 12 + houses * 2);
-  const gap = Math.max(2.6 / speed + 0.4, 4.6 - level * 0.18); // seconds between departures
+  const gap = SPAWN_SPACING * Math.max(2.6 / speed + 0.4, 2.8,
+    4.6 - Math.min(level, 10) * 0.15 - Math.max(0, level - 10) * 0.04); // seconds between departures
   let cols, rows;
   if (houses <= 3) [cols, rows] = [8, 6];
   else if (houses <= 5) [cols, rows] = [10, 7];
@@ -177,6 +184,12 @@ function finishMap(m, n) {
     return cell.sub;
   };
   collect(m.tunnel);
+  // Distance (in cells) from the tunnel to the first switch every train meets.
+  m.lead = 0;
+  for (let cell = m.tunnel; cell.type !== 'switch' && cell.kids.length; cell = m.neighbor(cell, cell.kids[0])) {
+    cell.slow = true; // painted as a slow zone
+    m.lead++;
+  }
 
   m.decor = [];
   for (let r = -2; r < m.rows + 2; r++) {
@@ -485,12 +498,14 @@ function update(dt) {
     const color = R.demo ? pick(m.colors) : R.queue[R.spawned];
     R.trains.push({ color, cells: [m.tunnel], exits: [m.tunnel.kids[0]], d: 0, arrived: false });
     R.spawned++;
-    R.timer = Math.max(2.3 / R.cfg.speed, R.cfg.gap * rand(0.8, 1.25));
+    R.timer = Math.max(2.3 / (R.cfg.speed * LEAD_SLOW), R.cfg.gap * rand(0.8, 1.25));
     if (!R.demo) sfx.depart();
   }
 
   for (const t of R.trains) {
-    t.d += R.cfg.speed * dt;
+    // Crawl out of the tunnel, then pick up speed once onto the first switch.
+    const pace = t.d < m.lead ? LEAD_SLOW : Math.min(1, LEAD_SLOW + (t.d - m.lead) * 2 * (1 - LEAD_SLOW));
+    t.d += R.cfg.speed * pace * dt;
     // A train commits to a switch's direction the moment it rolls onto it.
     while (Math.floor(t.d) >= t.cells.length) {
       const exit = t.exits[t.exits.length - 1];
@@ -617,12 +632,12 @@ function drawSegment(g, cell, a, b, tEnd = 1, alpha = 1) {
   g.lineCap = 'butt';
   g.beginPath();
   tracePath(g, x, y, a, b, 0, tEnd);
-  g.strokeStyle = C.ballast;
+  g.strokeStyle = cell.slow ? C.slowBallast : C.ballast;
   g.lineWidth = S * 0.46;
   g.stroke();
   g.setLineDash([S * 0.075, S * 0.125]);
   g.lineDashOffset = -S * 0.02;
-  g.strokeStyle = C.tie;
+  g.strokeStyle = cell.slow ? C.slowTie : C.tie;
   g.lineWidth = S * 0.36;
   g.stroke();
   g.setLineDash([]);
@@ -827,6 +842,43 @@ function drawHouse(h) {
   ctx.restore();
 }
 
+// A turtle sign beside the first cell out of the tunnel marks the slow zone.
+function drawSlowSign() {
+  const m = map;
+  const dir = m.tunnel.kids[0];
+  const cell = m.neighbor(m.tunnel, dir);
+  if (!cell || !cell.slow) return;
+  const sides = [(dir + 1) % 4, (dir + 3) % 4];
+  const isFree = d => {
+    const c = cell.c + DIRS[d][0], r = cell.r + DIRS[d][1];
+    return c < 0 || r < 0 || c >= m.cols || r >= m.rows || !m.grid[r * m.cols + c];
+  };
+  const side = sides.find(isFree) ?? sides[0];
+  const x = cx(cell) + DIRS[side][0] * S * 0.38;
+  const y = cy(cell) + DIRS[side][1] * S * 0.38;
+  const r = S * 0.21;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = 'rgba(0,0,0,.22)';
+  ctx.beginPath(); ctx.ellipse(S * 0.03, S * 0.2, S * 0.08, S * 0.035, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = C.signPost;
+  ctx.lineWidth = Math.max(2, S * 0.04);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, S * 0.2); ctx.stroke();
+  ctx.fillStyle = C.sign;
+  ctx.lineWidth = Math.max(1.5, S * 0.03);
+  ctx.beginPath(); ctx.arc(0, -r * 0.35, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // turtle, facing right
+  ctx.translate(0, -r * 0.3);
+  ctx.fillStyle = C.turtle;
+  for (const [lx, ly] of [[-0.42, 0.28], [0.32, 0.28]]) {
+    ctx.beginPath(); ctx.ellipse(lx * r, ly * r, r * 0.13, r * 0.17, 0, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.beginPath(); ctx.arc(r * 0.62, -r * 0.02, r * 0.17, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-r * 0.05, -r * 0.02, r * 0.55, r * 0.36, 0, Math.PI, 0); ctx.closePath(); ctx.fill();
+  ctx.fillRect(-r * 0.6, -r * 0.02, r * 1.1, r * 0.16);
+  ctx.restore();
+}
+
 function drawTunnel(t) {
   const h = S / 2;
   ctx.save();
@@ -891,6 +943,7 @@ function render() {
   if (round) for (const t of round.trains) drawTrain(t);
   for (const h of map.houses) drawHouse(h);
   drawTunnel(map.tunnel);
+  drawSlowSign();
   if (round) for (const e of round.effects) drawEffect(e);
 }
 

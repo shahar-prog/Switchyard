@@ -914,6 +914,11 @@ canvas.addEventListener('pointerdown', e => {
   if (!sw) return;
   sw.active = 1 - sw.active;
   sw.pop = 1;
+  // A train whose nose is on the switch right now follows the new direction.
+  for (const t of round.trains) {
+    const i = Math.floor(t.d);
+    if (i === t.cells.length - 1 && t.cells[i] === sw) t.exits[i] = exitFor(sw);
+  }
   sfx.click();
 });
 canvas.addEventListener('pointermove', e => {

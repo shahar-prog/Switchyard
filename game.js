@@ -276,7 +276,7 @@ app.innerHTML = `
       <button class="btn primary" type="button" id="btnPlay">Play</button>
       <button class="btn ghost" type="button" id="btnSound"></button>
     </div>
-    <p class="fine score-line">Best score <b id="menuBest">0</b> &middot; Route 80% of trains to move up a level</p>
+    <p class="fine score-line">Best score <b id="menuBest">0</b> &middot; Route 90% of trains to move up a level</p>
   </div>
 </section>
 
@@ -304,6 +304,11 @@ app.innerHTML = `
       <div class="stat" id="resBestBox"><span class="lbl">Best</span><b id="resBest">0</b></div>
     </div>
     <p class="fine" id="resNote"></p>
+    <div class="stepper">
+      <button type="button" id="resLvDown" aria-label="Lower level">&minus;</button>
+      <div><span class="lbl">Level</span><b id="resPick">1</b><small id="resPickInfo"></small></div>
+      <button type="button" id="resLvUp" aria-label="Higher level">+</button>
+    </div>
     <div class="btn-col">
       <button class="btn primary" type="button" id="btnNext">Next level</button>
       <button class="btn ghost" type="button" id="btnMenu">Main menu</button>
@@ -423,13 +428,18 @@ function updateHud() {
   $('hudTrains').textContent = `${round.done}/${round.cfg.trains}`;
 }
 
-function refreshMenu() {
+// Shows save.level in a level stepper (the main menu's or the results screen's).
+function refreshPicker(down, value, info, up) {
   save.level = Math.max(1, Math.min(save.level, pickableMax()));
   const cfg = levelConfig(save.level);
-  $('menuLevel').textContent = save.level;
-  $('menuInfo').textContent = `${cfg.houses} stations · ${cfg.trains} trains`;
-  $('lvDown').disabled = save.level <= 1;
-  $('lvUp').disabled = save.level >= pickableMax();
+  $(value).textContent = save.level;
+  $(info).textContent = `${cfg.houses} stations · ${cfg.trains} trains`;
+  $(down).disabled = save.level <= 1;
+  $(up).disabled = save.level >= pickableMax();
+}
+
+function refreshMenu() {
+  refreshPicker('lvDown', 'menuLevel', 'menuInfo', 'lvUp');
   $('menuBest').textContent = save.best.toLocaleString();
   $('btnSound').textContent = save.muted ? 'Sound: off' : 'Sound: on';
 }
@@ -462,11 +472,11 @@ function finishRound() {
   const R = round;
   const total = R.cfg.trains;
   const acc = R.correct / total;
-  let next = R.level, title, btn, note, cls = '';
-  if (acc >= 0.8) {
+  const need = Math.ceil(total * 9 / 10); // 90% of trains to move up
+  let next = R.level, title, note, cls = '';
+  if (R.correct >= need) {
     next = R.level + 1;
     title = acc === 1 ? 'Perfect run!' : 'Level up!';
-    btn = `Play level ${next}`;
     const nc = levelConfig(next), ups = [];
     if (nc.houses > R.cfg.houses) ups.push(`${nc.houses} stations`);
     if (nc.speed > R.cfg.speed) ups.push('faster trains');
@@ -477,13 +487,11 @@ function finishRound() {
     sfx.win();
   } else if (acc >= 0.5) {
     title = 'Almost there';
-    btn = 'Try again';
-    note = `Route ${Math.ceil(total * 0.8)} of ${total} trains correctly to move up.`;
+    note = `Route ${need} of ${total} trains correctly to move up.`;
     sfx.lose();
   } else {
     next = Math.max(1, R.level - 1);
     title = next < R.level ? 'Back one level' : 'Keep practicing';
-    btn = `Play level ${next}`;
     note = 'Fewer than half reached the right station. Watch the switch arrows as each train approaches.';
     cls = 'outcome-down';
     sfx.lose();
@@ -505,12 +513,18 @@ function finishRound() {
   $('resBestBox').classList.toggle('new', newBest);
   $('resBestBox').querySelector('.lbl').textContent = newBest ? 'New best' : 'Best';
   $('resNote').textContent = note;
-  $('btnNext').textContent = btn;
+  refreshResultsPick();
   $('hud').hidden = true;
   for (const b of fastBtns) b.hidden = true;
   clearHold();
   $('results').hidden = false;
   $('btnNext').focus({ preventScroll: true });
+}
+
+function refreshResultsPick() {
+  refreshPicker('resLvDown', 'resPick', 'resPickInfo', 'resLvUp');
+  const same = save.level === round.level;
+  $('btnNext').textContent = same ? `Replay level ${round.level}` : `Play level ${save.level}`;
 }
 
 // ---------- simulation ----------
@@ -1056,6 +1070,8 @@ $('btnRestart').addEventListener('click', () => startRound(round.level));
 $('btnQuit').addEventListener('click', showMenu);
 $('btnNext').addEventListener('click', () => startRound(save.level));
 $('btnMenu').addEventListener('click', showMenu);
+$('resLvDown').addEventListener('click', () => { save.level--; refreshResultsPick(); persist(); });
+$('resLvUp').addEventListener('click', () => { save.level++; refreshResultsPick(); persist(); });
 
 document.addEventListener('keyup', e => {
   const k = e.key.toLowerCase();

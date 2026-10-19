@@ -62,25 +62,29 @@ function persist() {
 function levelConfig(level) {
   const houses = Math.min(PALETTE.length, 2 + Math.ceil(level / 2));
   // Speed and frequency ramp up through the early levels, then flatten out
-  // so the late levels get harder mostly through extra stations.
-  const early = Math.min(level, 8), late = Math.max(0, level - 8);
-  const speed = Math.min(2.1, 1.15 + early * 0.07 + late * 0.025); // cells per second
+  // so the mid levels get harder mostly through extra stations. Past 15, with
+  // every color in play, there is no ceiling: trains keep speeding up,
+  // departures keep tightening and routes keep getting twistier.
+  const early = Math.min(level, 8), late = Math.max(0, level - 8), past = Math.max(0, level - 15);
+  const speed = 1.15 + early * 0.07 + late * 0.025; // cells per second
   const trains = Math.min(30, 12 + houses * 2);
-  const gap = SPAWN_SPACING * Math.max(2.6 / speed + 0.4, 2.8,
-    4.6 - Math.min(level, 10) * 0.15 - Math.max(0, level - 10) * 0.04); // seconds between departures
+  const spacing = 4.6 - Math.min(level, 10) * 0.15 - Math.max(0, Math.min(level, 15) - 10) * 0.04;
+  // Never closer than trains can physically follow each other out of the tunnel.
+  const gap = SPAWN_SPACING * Math.max(2.6 / speed + 0.4, spacing * 0.975 ** past); // seconds between departures
+  const twist = past / 15; // favors routes through more switches; 1 at level 30, still rising after
   let cols, rows;
   if (houses <= 3) [cols, rows] = [8, 6];
   else if (houses <= 5) [cols, rows] = [10, 7];
   else if (houses <= 7) [cols, rows] = [11, 8];
   else [cols, rows] = [13, 9];
-  return { houses, speed, trains, gap, cols, rows };
+  return { houses, speed, trains, gap, twist, cols, rows };
 }
 
 // ---------- map generation ----------
 // The track is a tree grown on a grid: a trunk leaves the tunnel, and each
 // extra station is a branch that splits off an existing straight/curve cell,
 // turning that cell into a two-way switch.
-function tryGenerate(cols, rows, nHouses) {
+function tryGenerate(cols, rows, nHouses, twist) {
   const grid = new Array(cols * rows).fill(null);
   const cells = [];
   const inside = (c, r) => c >= 0 && r >= 0 && c < cols && r < rows;
@@ -132,7 +136,8 @@ function tryGenerate(cols, rows, nHouses) {
 
   let houses = 1;
   for (let tries = 0; houses < nHouses && tries < 400; tries++) {
-    const x = pick(cells);
+    // Twistier levels grow branches off recent branches, nesting switches deeper.
+    const x = Math.random() < Math.min(0.9, twist * 0.6) ? pick(cells.slice(cells.length >> 1)) : pick(cells);
     // Keep switches apart: never directly after another switch or the tunnel.
     if (x.type !== 'track' || x.parent.type !== 'track') continue;
     // Give the player time to react before the first switch.
@@ -152,15 +157,18 @@ function tryGenerate(cols, rows, nHouses) {
   const houseCells = cells.filter(x => x.type === 'house');
   const minDepth = Math.min(...houseCells.map(h => h.depth));
   const spread = new Set(houseCells.map(h => h.c)).size + new Set(houseCells.map(h => h.r)).size;
-  const score = cells.length + minDepth * 1.5 + spread + Math.random() * 4;
+  let switchesOnRoutes = 0;
+  for (const h of houseCells) for (let x = h.parent; x; x = x.parent) if (x.type === 'switch') switchesOnRoutes++;
+  const score = cells.length + minDepth * 1.5 + spread + Math.random() * 4
+    + twist * 8 * switchesOnRoutes / houseCells.length;
   return { cols, rows, grid, cells, tunnel, score };
 }
 
-function generateMap(cols, rows, nHouses) {
+function generateMap(cols, rows, nHouses, twist = 0) {
   for (let grow = 0; grow < 5; grow++) {
     let best = null;
     for (let i = 0; i < 300; i++) {
-      const m = tryGenerate(cols, rows, nHouses);
+      const m = tryGenerate(cols, rows, nHouses, twist);
       if (m && (!best || m.score > best.score)) best = m;
       if (best && i >= 50) break;
     }
@@ -345,7 +353,7 @@ function boardIsPortrait() {
 
 function makeMap(cfg) {
   const portrait = boardIsPortrait();
-  return generateMap(portrait ? cfg.rows : cfg.cols, portrait ? cfg.cols : cfg.rows, cfg.houses);
+  return generateMap(portrait ? cfg.rows : cfg.cols, portrait ? cfg.cols : cfg.rows, cfg.houses, cfg.twist);
 }
 
 function startDemo() {
@@ -443,7 +451,12 @@ function finishRound() {
     next = R.level + 1;
     title = acc === 1 ? 'Perfect run!' : 'Level up!';
     btn = `Play level ${next}`;
-    note = `Next up: ${levelConfig(next).houses} stations, faster trains.`;
+    const nc = levelConfig(next), ups = [];
+    if (nc.houses > R.cfg.houses) ups.push(`${nc.houses} stations`);
+    if (nc.speed > R.cfg.speed) ups.push('faster trains');
+    if (nc.gap < R.cfg.gap) ups.push('tighter spacing');
+    if (nc.twist > R.cfg.twist) ups.push('twistier tracks');
+    note = ups.length ? `Next up: ${ups.join(', ')}.` : 'Top difficulty. How long can you keep it up?';
     cls = 'outcome-up';
     sfx.win();
   } else if (acc >= 0.5) {

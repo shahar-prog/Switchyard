@@ -27,6 +27,12 @@ const PALETTE = [
   { id: 'pink',   name: 'Pink',   fill: '#ff7ab9', dark: '#b83f78' },
   { id: 'cyan',   name: 'Cyan',   fill: '#33c8da', dark: '#147886' },
   { id: 'brown',  name: 'Brown',  fill: '#9a6338', dark: '#573417' },
+  { id: 'gray',    name: 'Gray',    fill: '#a3a9b2', dark: '#5c626b' },
+  { id: 'emerald', name: 'Emerald', fill: '#14946a', dark: '#07513a' },
+  { id: 'magenta', name: 'Magenta', fill: '#d81fc4', dark: '#7d0a70' },
+  { id: 'navy',    name: 'Navy',    fill: '#2b3a8c', dark: '#121a4a' },
+  { id: 'lime',    name: 'Lime',    fill: '#cdeb3b', dark: '#7d9410' },
+  { id: 'maroon',  name: 'Maroon',  fill: '#8a1a37', dark: '#4a0a1c' },
 ];
 
 const C = {
@@ -54,6 +60,14 @@ function loadSave() {
   return {};
 }
 const save = Object.assign({ level: 1, maxLevel: 1, best: 0, muted: false }, loadSave());
+// Testing cheat: on claude.ai any level can be picked, unlocked or not.
+// Artifacts run in a frame on another domain, so also check who embeds the page.
+const CHEAT_LEVELS = (() => {
+  const onClaude = url => { try { return /(^|\.)claude\.ai$/.test(new URL(url).hostname); } catch (e) { return false; } };
+  return onClaude(location.href) || onClaude(document.referrer)
+    || Array.from(location.ancestorOrigins || []).some(onClaude);
+})();
+const pickableMax = () => (CHEAT_LEVELS ? Math.max(save.maxLevel, 100) : save.maxLevel);
 function persist() {
   try { localStorage.setItem(STORE_KEY, JSON.stringify(save)); } catch (e) { /* storage unavailable */ }
 }
@@ -76,7 +90,9 @@ function levelConfig(level) {
   if (houses <= 3) [cols, rows] = [8, 6];
   else if (houses <= 5) [cols, rows] = [10, 7];
   else if (houses <= 7) [cols, rows] = [11, 8];
-  else [cols, rows] = [13, 9];
+  else if (houses <= 10) [cols, rows] = [13, 9];
+  else if (houses <= 13) [cols, rows] = [14, 10];
+  else [cols, rows] = [15, 11];
   return { houses, speed, trains, gap, twist, cols, rows };
 }
 
@@ -408,12 +424,12 @@ function updateHud() {
 }
 
 function refreshMenu() {
-  save.level = Math.max(1, Math.min(save.level, save.maxLevel));
+  save.level = Math.max(1, Math.min(save.level, pickableMax()));
   const cfg = levelConfig(save.level);
   $('menuLevel').textContent = save.level;
   $('menuInfo').textContent = `${cfg.houses} stations · ${cfg.trains} trains`;
   $('lvDown').disabled = save.level <= 1;
-  $('lvUp').disabled = save.level >= save.maxLevel;
+  $('lvUp').disabled = save.level >= pickableMax();
   $('menuBest').textContent = save.best.toLocaleString();
   $('btnSound').textContent = save.muted ? 'Sound: off' : 'Sound: on';
 }
